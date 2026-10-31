@@ -1,12 +1,13 @@
 ﻿using System;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace NetCoreServer
 {
     /// <summary>
-    /// HTTP client is used to communicate with HTTP Web server. It allows to send GET, POST, PUT, DELETE requests and receive HTTP result.
+    /// HTTP client is used to communicate with HTTP Web server. It allows to send GET, QUERY, POST, PUT, DELETE requests and receive HTTP result.
     /// </summary>
     /// <remarks>Thread-safe.</remarks>
     public class HttpClient : TcpClient
@@ -267,7 +268,7 @@ namespace NetCoreServer
             // Check if the HTTP request is valid
             if (Request.IsEmpty || Request.IsErrorSet)
             {
-                SetPromiseError("Invalid HTTP request!");
+                SetResponseError("Invalid HTTP request!");
                 return _tcs.Task;
             }
 
@@ -276,7 +277,7 @@ namespace NetCoreServer
                 // Connect to the Web server
                 if (!ConnectAsync())
                 {
-                    SetPromiseError("Connection failed!");
+                    SetResponseError("Connection failed!");
                     return _tcs.Task;
                 }
             }
@@ -285,7 +286,7 @@ namespace NetCoreServer
                 // Send prepared HTTP request
                 if (!SendRequestAsync())
                 {
-                    SetPromiseError("Failed to send HTTP request!");
+                    SetResponseError("Failed to send HTTP request!");
                     return _tcs.Task;
                 }
             }
@@ -294,7 +295,7 @@ namespace NetCoreServer
             {
                 // Disconnect on timeout
                 OnReceivedResponseError(Response, "Timeout!");
-                Response.Clear();
+
                 DisconnectAsync();
             }
 
@@ -322,6 +323,14 @@ namespace NetCoreServer
         /// <param name="timeout">Current HTTP request timeout (default is 1 minute)</param>
         /// <returns>HTTP request Task</returns>
         public Task<HttpResponse> SendGetRequest(string url, TimeSpan? timeout = null) => SendRequest(Request.MakeGetRequest(url), timeout);
+        /// <summary>
+        /// Send QUERY request
+        /// </summary>
+        /// <param name="url">URL to request</param>
+        /// <param name="content">Content</param>
+        /// <param name="timeout">Current HTTP request timeout (default is 1 minute)</param>
+        /// <returns>HTTP request Task</returns>
+        public Task<HttpResponse> SendQueryRequest(string url, string content, TimeSpan? timeout = null) => SendRequest(Request.MakeQueryRequest(url, content), timeout);
         /// <summary>
         /// Send POST request
         /// </summary>
@@ -369,7 +378,7 @@ namespace NetCoreServer
             // Send prepared HTTP request on connect
             if (!Request.IsEmpty && !Request.IsErrorSet)
                 if (!SendRequestAsync())
-                    SetPromiseError("Failed to send HTTP request!");
+                    SetResponseError("Failed to send HTTP request!");
         }
 
         protected override void OnDisconnected()
@@ -377,7 +386,21 @@ namespace NetCoreServer
             // Cancel timeout check timer
             _timer?.Change(Timeout.Infinite, Timeout.Infinite);
 
+            if (!Request.IsEmpty)
+                SetResponseError("Disconnected!");
+
             base.OnDisconnected();
+        }
+
+        protected override void OnError(SocketError error)
+        {
+            // Cancel timeout check timer
+            _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+            if (!Request.IsEmpty)
+                SetResponseError(error.ToString());
+
+            base.OnError(error);
         }
 
         protected override void OnReceivedResponse(HttpResponse response)
@@ -385,7 +408,7 @@ namespace NetCoreServer
             // Cancel timeout check timer
             _timer?.Change(Timeout.Infinite, Timeout.Infinite);
 
-            SetPromiseValue(response);
+            SetResponseValue(response);
         }
 
         protected override void OnReceivedResponseError(HttpResponse response, string error)
@@ -393,7 +416,7 @@ namespace NetCoreServer
             // Cancel timeout check timer
             _timer?.Change(Timeout.Infinite, Timeout.Infinite);
 
-            SetPromiseError(error);
+            SetResponseError(error);
         }
 
         #endregion
@@ -401,16 +424,30 @@ namespace NetCoreServer
         private TaskCompletionSource<HttpResponse> _tcs = new TaskCompletionSource<HttpResponse>();
         private Timer _timer;
 
-        private void SetPromiseValue(HttpResponse response)
+        private void SetResponseValue(HttpResponse response)
         {
+            // Returned response should not be reused anymore
             Response = new HttpResponse();
-            _tcs.SetResult(response);
+
+            // Guard try/catch block against task completion source double-resolution races
+            try
+            {
+                _tcs.SetResult(response);
+            } catch (Exception) {}
+
+            // Clear HTTP request
             Request.Clear();
         }
 
-        private void SetPromiseError(string error)
+        private void SetResponseError(string error)
         {
-            _tcs.SetException(new Exception(error));
+            // Guard try/catch block against task completion source double-resolution races
+            try
+            {
+                _tcs.SetException(new Exception(error));
+            } catch (Exception) {}
+
+            // Clear HTTP request
             Request.Clear();
         }
 

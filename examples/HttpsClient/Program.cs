@@ -27,7 +27,7 @@ namespace HttpsClient
             Console.WriteLine();
 
             // Create and prepare a new SSL client context
-            var context = new SslContext(SslProtocols.Tls13, new X509Certificate2("client.pfx", "qwerty"), (sender, certificate, chain, sslPolicyErrors) => true);
+            var context = new SslContext(X509CertificateLoader.LoadPkcs12FromFile("client.pfx", "qwerty"), (sender, certificate, chain, sslPolicyErrors) => true);
 
             // Create a new HTTPS client
             var client = new HttpsClientEx(context, Dns.GetHostAddresses(address).FirstOrDefault(), port);
@@ -68,6 +68,11 @@ namespace HttpsClient
                 else if (commands[0].ToUpper() == "GET")
                 {
                     var response = client.SendGetRequest(commands[1]).Result;
+                    Console.WriteLine(response);
+                }
+                else if (commands[0].ToUpper() == "QUERY")
+                {
+                    var response = client.SendPostRequest(commands[1], (commands.Length < 3) ? "" : commands[2]).Result;
                     Console.WriteLine(response);
                 }
                 else if (commands[0].ToUpper() == "POST")
